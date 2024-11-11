@@ -937,13 +937,13 @@ function InventoryAPI.canCarryAmountWeapons(player, amount, cb, weaponName)
 
 	local function getWeaponNameFromHash()
 		if weaponName and type(weaponName) == "number" then
-			for _, value in ipairs(SharedData.Weapons) do
+			for _, value in pairs(SharedData.Weapons) do
 				if joaat(value.HashName) == weaponName then
 					return value.HashName
 				end
 			end
 		end
-		return weaponName
+		return SharedData.Weapons[weaponName] and weaponName or nil
 	end
 
 	weaponName = getWeaponNameFromHash()
@@ -970,10 +970,8 @@ function InventoryAPI.canCarryAmountWeapons(player, amount, cb, weaponName)
 		return respond(cb, false)
 	end
 
-	if weaponName then
-		if SharedUtils.IsValueInArray(weaponName:upper(), Config.notweapons) then
-			return respond(cb, true)
-		end
+	if weaponName and Config.notweapons[weaponName:upper()] then
+		return respond(cb, true)
 	end
 
 	if Config.JobsAllowed[job] then
@@ -1103,16 +1101,7 @@ function InventoryAPI.registerWeapon(_target, wepname, ammos, components, comps,
 		return respond(cb, nil)
 	end
 
-	local function isWeaponInConfig()
-		for index, value in ipairs(SharedData.Weapons) do
-			if value.HashName == wepname:upper() then
-				return true
-			end
-		end
-		return false
-	end
-
-	if not isWeaponInConfig() then
+	if not SharedData.Weapons[wepname:upper()] then
 		return respond(cb, nil)
 	end
 
@@ -1257,10 +1246,8 @@ function InventoryAPI.giveWeapon(player, weaponId, target, cb)
 	end
 
 	if DefaultAmount ~= 0 then
-		if weaponName then
-			if SharedUtils.IsValueInArray(weaponName:upper(), Config.notweapons) then
-				notListed = true
-			end
+		if weaponName and Config.notweapons[weaponName:upper()] then
+			notListed = true
 		end
 
 		if not notListed then
@@ -1357,7 +1344,7 @@ function InventoryAPI.getUserTotalCountWeapons(identifier, charId, checkWeight)
 
 		if owner_identifier == identifier and owner_charid == charId then
 			local weaponName = weapon:getName()
-			if not SharedUtils.IsValueInArray(weaponName:upper(), Config.notweapons) or checkWeight then
+			if weaponName and not Config.notweapons[weaponName:upper()] or checkWeight then
 				local count = 0
 				if checkWeight then
 					count = weapon:getWeight()
@@ -1464,7 +1451,7 @@ exports("AddCharIdPermissionTakeFromCustom", InventoryAPI.AddCharIdPermissionTak
 ---@param id string inventory id
 ---@param name string item or weapon name
 function InventoryAPI.BlackListCustom(id, name)
-	if not CustomInventoryInfos[id] then
+	if not CustomInventoryInfos[id] or not name then
 		return
 	end
 
@@ -1480,6 +1467,7 @@ function InventoryAPI.removeInventory(id)
 	if not CustomInventoryInfos[id] then
 		return
 	end
+
 	CustomInventoryInfos[id]:removeCustomInventory()
 end
 
@@ -1743,7 +1731,7 @@ function InventoryAPI.openPlayerInventory(data, callback)
 	local allowItems, cooldownItems = HandleLimits("items")
 
 	if cooldownWeapons and cooldownItems then
-		Core.NotifyObjective(source, "You can't open the inventory due to cooldown on both weapons and items.", 5000)
+		Core.NotifyObjective(source, T.BothonCool, 5000)
 		return respond(callback, false)
 	end
 
@@ -1818,10 +1806,9 @@ function InventoryAPI.addWeaponsToCustomInventory(id, weapons, charid, callback)
 		return respond(callback, false)
 	end
 
-	--is this inv allowed to add weapons ?
 	if not CustomInventoryInfos[id]:doesAcceptWeapons() then
 		print("InventoryAPI.addWeaponsToCustomInventory: this inventory does not accept weapons, change the settings in the registerCustomInventory export")
-		--return respond(callback, false)
+		return respond(callback, false)
 	end
 
 	if not charid or charid == 0 then
@@ -1851,26 +1838,155 @@ function InventoryAPI.getCustomInventoryItemCount(id, item_name)
 	if not CustomInventoryInfos[id] then
 		return 0
 	end
-	local result = MySQL.query.await("SELECT SUM(amount) as total_amount FROM character_inventories WHERE inventory_type = @invType AND item_name = @item_name;", { invType = id, item_name = item_name })
+	local result = DBService.queryAwait("SELECT SUM(amount) as total_amount FROM character_inventories WHERE inventory_type = @invType AND item_name = @item_name;", { invType = id, item_name = item_name })
 	if result[1] and result[1].total_amount then
-		return result[1].total_amount
+		return tonumber(result[1].total_amount)
 	end
 	return 0
 end
 
 exports('getCustomInventoryItemCount', InventoryAPI.getCustomInventoryItemCount)
 
-
 function InventoryAPI.getCustomInventoryWeaponCount(id, weapon_name)
 	if not CustomInventoryInfos[id] then
 		return 0
 	end
 
-	local result = MySQL.query.await("SELECT COUNT(*) as total_count FROM loadout WHERE curr_inv = @invType AND weapon = @weapon_name", { invType = id, weapon_name = weapon_name })
+	--local result = MySQL.query.await("SELECT COUNT(*) as total_count FROM loadout WHERE curr_inv = @invType AND weapon = @weapon_name", { invType = id, weapon_name = weapon_name })
+	local result = DBService.queryAwait("SELECT COUNT(*) as total_count FROM loadout WHERE curr_inv = @invType AND weapon = @weapon_name", { invType = id, weapon_name = weapon_name })
 	if result[1] and result[1].total_count then
-		return result[1].total_count
+		return tonumber(result[1].total_count)
 	end
 	return 0
 end
 
 exports('getCustomInventoryWeaponCount', InventoryAPI.getCustomInventoryWeaponCount)
+
+
+-- remove item from inventory
+---@param id string inventory id
+---@param item_name string item name
+---@param amount number amount to remove
+---@param callback fun(success: boolean)? async or sync callback
+---@return boolean
+function InventoryAPI.removeItemFromCustomInventory(id, item_name, amount, callback)
+	if not CustomInventoryInfos[id] then
+		return respond(callback, false)
+	end
+
+	if InventoryService.removeItemFromCustomInventory(id, item_name, amount) then
+		return respond(callback, true)
+	end
+
+	return respond(callback, false)
+end
+
+exports("removeItemFromCustomInventory", InventoryAPI.removeItemFromCustomInventory)
+
+-- remove weapon from inventory
+---@param id string inventory id
+---@param weapon_name string weapon name
+---@param callback fun(success: boolean)? async or sync callback
+---@return boolean
+function InventoryAPI.removeWeaponFromCustomInventory(id, weapon_name, callback)
+	if not CustomInventoryInfos[id] then
+		return respond(callback, false)
+	end
+
+	if InventoryService.removeWeaponFromCustomInventory(id, weapon_name) then
+		return respond(callback, true)
+	end
+
+	return respond(callback, false)
+end
+
+exports("removeWeaponFromCustomInventory", InventoryAPI.removeWeaponFromCustomInventory)
+
+
+-- get all items from custom inventory
+---@param id string inventory id
+---@param callback fun(items: table)? async or sync callback
+---@return table | nil
+function InventoryAPI.getCustomInventoryItems(id, callback)
+	if not CustomInventoryInfos[id] then
+		return respond(callback, false)
+	end
+
+	local items = InventoryService.getAllItemsFromCustomInventory(id)
+	return respond(callback, items)
+end
+
+exports("getCustomInventoryItems", InventoryAPI.getCustomInventoryItems)
+
+-- get all weapons from custom inventory
+---@param id string inventory id
+---@param callback fun(weapons: table)? async or sync callback
+---@return table | boolean
+function InventoryAPI.getCustomInventoryWeapons(id, callback)
+	if not CustomInventoryInfos[id] then
+		return respond(callback, false)
+	end
+
+	local weapons = InventoryService.getAllWeaponsFromCustomInventory(id)
+	return respond(callback, weapons)
+end
+
+exports("getCustomInventoryWeapons", InventoryAPI.getCustomInventoryWeapons)
+
+-- remove weapon from custom inventory by weapon id
+---@param id string inventory id
+---@param weapon_id number weapon id
+---@param callback fun(success: boolean)? async or sync callback
+---@return boolean
+function InventoryAPI.removeWeaponByIdFromCustomInventory(id, weapon_id, callback)
+	if not CustomInventoryInfos[id] then
+		return respond(callback, false)
+	end
+
+	if InventoryService.removeWeaponsByIdFromCustomInventory(id, weapon_id) then
+		return respond(callback, true)
+	end
+
+	return respond(callback, false)
+end
+
+exports("removeCustomInventoryWeaponById", InventoryAPI.removeWeaponByIdFromCustomInventory)
+
+-- update item amount and metdata
+---@param id string inventory id
+---@param item_id number item id
+---@param metadata table? metadata
+---@param amount number? amount
+---@param callback fun(success: boolean)? async or sync callback
+---@return boolean
+function InventoryAPI.updateItemInCustomInventory(id, item_id, metadata, amount, callback)
+	if not CustomInventoryInfos[id] then
+		return respond(callback, false)
+	end
+
+	if InventoryService.updateItemInCustomInventory(id, item_id, metadata, amount) then
+		return respond(callback, true)
+	end
+
+	return respond(callback, false)
+end
+
+exports("updateCustomInventoryItem", InventoryAPI.updateItemInCustomInventory)
+
+-- delete custom inventory items and weapons, after this inventory will be clear from all items and weapons including cache
+---@param id string inventory id
+---@param callback fun(success: boolean)? async or sync callback
+---@return boolean
+function InventoryAPI.deleteCustomInventory(id, callback)
+	if not CustomInventoryInfos[id] then
+		return respond(callback, false)
+	end
+
+	if InventoryService.deleteCustomInventory(id) then
+		return respond(callback, true)
+	end
+	CustomInventoryInfos[id]:removeCustomInventory()
+	return respond(callback, false)
+end
+
+exports("deleteCustomInventory", InventoryAPI.deleteCustomInventory)
