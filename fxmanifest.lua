@@ -3,9 +3,8 @@ fx_version 'cerulean'
 rdr3_warning 'I acknowledge that this is a prerelease build of RedM, and I am aware my resources *will* become incompatible once RedM ships.'
 
 game 'rdr3'
-author 'VORP [AxelWarZ Rework]'
+author 'VORP'
 name 'vorp inventory'
-repository 'https://github.com/VORPCORE/vorp_inventory-lua'
 description 'Inventory System for RedM VORPCore framework'
 
 lua54 'yes'
